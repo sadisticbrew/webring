@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"html/template"
+	"html"
 	"log/slog"
 	"math/rand"
 	"net/http"
@@ -11,7 +11,6 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"unicode"
 
 	_ "embed"
 
@@ -28,23 +27,54 @@ type WebringEntry struct {
 var webringRaw []byte
 
 //go:embed index.html
-var indexRaw string
+var indexHTML []byte
 
 var hostsToIgnore = []string{"ring.seggs.lol", "seggs.lol", "www.seggs.lol"}
 
+// initial returns the uppercased first character of s (for the letter avatar).
 func initial(s string) string {
 	for _, r := range s {
-		return string(unicode.ToUpper(r))
+		return strings.ToUpper(string(r))
 	}
 	return ""
 }
 
-func host(rawURL string) string {
-	u, err := url.Parse(rawURL)
+// host strips the scheme and a leading "www." from a url for display.
+func host(raw string) string {
+	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
-		return rawURL
+		return raw
 	}
 	return strings.TrimPrefix(u.Host, "www.")
+}
+
+// renderIndex injects the member cards into the embedded page once, at startup,
+// so each request just writes static bytes (no per-request templating).
+func renderIndex(webring []WebringEntry) []byte {
+	var cards strings.Builder
+	for _, e := range webring {
+		name := html.EscapeString(e.Name)
+		cards.WriteString(`<a class="card" href="`)
+		cards.WriteString(html.EscapeString(e.Url))
+		cards.WriteString(`" rel="noopener" data-name="`)
+		cards.WriteString(name)
+		cards.WriteString(`"><span class="avatar">`)
+		cards.WriteString(html.EscapeString(initial(e.Name)))
+		if e.Gh != "" {
+			cards.WriteString(`<img src="https://avatars.githubusercontent.com/`)
+			cards.WriteString(html.EscapeString(e.Gh))
+			cards.WriteString(`?size=96" alt="" loading="lazy" onerror="this.setAttribute('data-failed','')" />`)
+		}
+		cards.WriteString(`</span><span class="meta"><span class="name">`)
+		cards.WriteString(name)
+		cards.WriteString(`</span><span class="host">`)
+		cards.WriteString(html.EscapeString(host(e.Url)))
+		cards.WriteString(`</span></span><span class="arrow">&rarr;</span></a>`)
+	}
+
+	out := strings.Replace(string(indexHTML), "<!--MEMBERS-->", cards.String(), 1)
+	out = strings.Replace(out, "<!--COUNT-->", fmt.Sprintf("%d members", len(webring)), 1)
+	return []byte(out)
 }
 
 func main() {
@@ -54,14 +84,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	indexTmpl, err := template.New("index").Funcs(template.FuncMap{
-		"initial": initial,
-		"host":    host,
-	}).Parse(indexRaw)
-	if err != nil {
-		slog.Error("failed to parse index template", "error", err)
-		os.Exit(1)
-	}
+	page := renderIndex(webring)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		reqHost := r.Host
@@ -85,9 +108,7 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := indexTmpl.Execute(w, webring); err != nil {
-			slog.Error("failed to render index", "error", err)
-		}
+		w.Write(page)
 	})
 
 	http.HandleFunc("/webring", func(w http.ResponseWriter, r *http.Request) {

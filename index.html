@@ -249,7 +249,7 @@
           <h1>thread<span class="ring">locked</span></h1>
           <p class="desc">
             a webring of personal sites.
-            <span class="count">{{len .}} members</span>
+            <span class="count" id="count"><!--COUNT--></span>
           </p>
         </div>
         <button id="toggle" type="button" aria-label="Toggle theme"></button>
@@ -266,27 +266,7 @@
         />
       </div>
 
-      <div class="grid">
-        {{range .}}
-        <a class="card" href="{{.Url}}" rel="noopener" data-name="{{.Name}}">
-          <span class="avatar">
-            {{initial .Name}}
-            <img
-              src="https://github.com/{{host .Gh}}.png"
-              alt=""
-              loading="lazy"
-              onload="if(this.naturalWidth<=16)this.setAttribute('data-failed','')"
-              onerror="this.setAttribute('data-failed','')"
-            />
-          </span>
-          <span class="meta">
-            <span class="name">{{.Name}}</span>
-            <span class="host">{{host .Url}}</span>
-          </span>
-          <span class="arrow">&rarr;</span>
-        </a>
-        {{end}}
-      </div>
+      <div class="grid" id="grid"><!--MEMBERS--></div>
 
       <p id="empty" class="empty" hidden>no members match.</p>
 
@@ -297,8 +277,10 @@
       </footer>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
     <script>
       (function () {
+        // ---- theme toggle ----
         var root = document.documentElement;
         var btn = document.getElementById("toggle");
         var icons = { dark: "☾", light: "☀" };
@@ -319,23 +301,47 @@
           apply(root.dataset.theme === "dark" ? "light" : "dark");
         });
 
-        // ---- search ----
+        // ---- search over server-rendered cards ----
         var search = document.getElementById("search");
         var empty = document.getElementById("empty");
-        var cards = Array.prototype.slice.call(
-          document.querySelectorAll(".card")
-        );
+
+        var items = [].slice
+          .call(document.querySelectorAll(".card"))
+          .map(function (el) {
+            return { name: el.dataset.name, el: el };
+          });
+
+        var fuse =
+          typeof Fuse !== "undefined"
+            ? new Fuse(items, {
+                keys: ["name"],
+                threshold: 0.1,
+                ignoreLocation: true,
+              })
+            : null;
 
         search.addEventListener("input", function () {
-          var query = search.value.trim().toLowerCase();
-          var shown = 0;
-          cards.forEach(function (card) {
-            var visible =
-              !query || card.dataset.name.toLowerCase().indexOf(query) !== -1;
-            card.hidden = !visible;
-            if (visible) shown++;
+          var q = search.value.trim();
+          if (!q) {
+            items.forEach(function (it) { it.el.hidden = false; });
+            empty.hidden = true;
+            return;
+          }
+
+          var matched;
+          if (fuse) {
+            matched = fuse.search(q).map(function (res) { return res.item; });
+          } else {
+            var lq = q.toLowerCase();
+            matched = items.filter(function (it) {
+              return it.name.toLowerCase().indexOf(lq) !== -1;
+            });
+          }
+
+          items.forEach(function (it) {
+            it.el.hidden = matched.indexOf(it) === -1;
           });
-          empty.hidden = shown !== 0;
+          empty.hidden = matched.length !== 0;
         });
       })();
     </script>
